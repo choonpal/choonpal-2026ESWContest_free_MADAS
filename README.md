@@ -79,22 +79,18 @@ tools/                           # 배포·preflight·운용 도구
 - STM32 모터·엔코더·초음파·그리퍼 제어
 - Jetson 기반 operator web UI
 
-## 제외한 항목
-
-이 저장소는 **소스코드 제출본**이므로 다음은 의도적으로 제외했습니다.
+## 제출본에서 제외한 항목
 
 - 자동 회귀/단위 테스트 (`test/`)
 - 개발 과정의 ADR, change log 및 실험 문서
 - 학습된 YOLO weight (`*.pt`)
 - 현장별 생성 calibration 결과 (`*.npz`, Homography `*.npy`)
 - STM32CubeF4의 ST 제공 HAL/CMSIS vendor source
-- 임시 실험 파일, rosbag, 로그, 빌드 산출물
+- rosbag, 로그, 빌드 산출물 및 임시 실험 파일
 
 모델 weight와 현장 calibration 값은 실행 환경에 종속되는 결과물이며, 본 저장소에서는 이를 사용하는 프로그램 소스와 보정 도구를 공개합니다.
 
 ## Build
-
-ROS 2 package:
 
 ```bash
 mkdir -p ~/esw_ws/src
@@ -106,4 +102,4 @@ source install/setup.bash
 
 STM32 firmware는 `stm32/parking_robot/parking_robot.ioc`를 기준으로 STM32CubeMX/CubeIDE에서 STM32CubeF4 HAL/CMSIS를 생성한 뒤 빌드합니다.
 
-자세한 파일별 제출 범위는 [`SOURCE_MANIFEST.md`](SOURCE_MANIFEST.md), 외부 의존성은 [`THIRD_PARTY.md`](THIRD_PARTY.md)를 참고하십시오.
+파일별 제출 범위는 [`SOURCE_MANIFEST.md`](SOURCE_MANIFEST.md), 외부 의존성은 [`THIRD_PARTY.md`](THIRD_PARTY.md)를 참고하십시오.
