@@ -33,8 +33,9 @@ setup(
             ('cctv_robot_marker_baseline = '
              'cooperative_parking_robot.cctv_robot_marker_node:main'),
             'cctv_merge = cooperative_parking_robot.cctv_merge_global_vehicle_node:main',
-            # Production keeps the existing command-owner/completion-first
-            # stack, and replaces only ALIGN_SLOT_YAW with Q/E phase control.
+            # Production retains YOLO global x/y plus ID0 relative formation
+            # control.  The current launch selects fixed-yaw translation-only
+            # final parking; the legacy final-rotation path remains in code.
             ('rigid_body_sync = '
              'cooperative_parking_robot.rigid_body_sync_vehicle_global_node:main'),
             ('rigid_body_sync_mvp_baseline = '
