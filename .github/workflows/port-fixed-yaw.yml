@@ -75,7 +75,7 @@ jobs:
           grep -q "self.declare_parameter('translation_only_transport', False)" ros2/cooperative_parking_robot/cooperative_parking_robot/fleet_manager_node.py
           grep -q 'departure_pose = make_waiting_staging' ros2/cooperative_parking_robot/cooperative_parking_robot/fleet_manager_node.py
           grep -q 'start.yaw_rad if self.translation_only_transport' ros2/cooperative_parking_robot/cooperative_parking_robot/fleet_manager_node.py
-          grep -q "yaw_error = self.angle_norm(self.yaw_reference - ct)" ros2/cooperative_parking_robot/cooperative_parking_robot/rigid_body_sync_node.py
+          grep -q 'self.yaw_reference - current_yaw' ros2/cooperative_parking_robot/cooperative_parking_robot/rigid_body_sync_node.py
           grep -q 'rigid_body_sync_vehicle_global_node:main' ros2/cooperative_parking_robot/setup.py
 
       - name: Commit port
