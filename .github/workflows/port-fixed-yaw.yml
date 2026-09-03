@@ -1,0 +1,77 @@
+name: Port fixed-yaw parking
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/port-fixed-yaw.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  port:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout submission repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch fixed-yaw feature commit from parkingbot
+        run: |
+          git remote add parkingbot https://github.com/choonpal/parkingbot.git
+          git fetch --no-tags parkingbot \
+            77b2469b97a070791a06f8f75ff20880e668d039 \
+            d05b7af52e25efec2d8763e7109ba4eee78bb4e8
+
+      - name: Port fixed-yaw production changes
+        run: |
+          set -euo pipefail
+          paths=(
+            ros2/cooperative_parking_robot/config/parking_layout.yaml
+            ros2/cooperative_parking_robot/config/sync_params.yaml
+            ros2/cooperative_parking_robot/cooperative_parking_robot/bev_layout_core.py
+            ros2/cooperative_parking_robot/cooperative_parking_robot/fleet_manager_node.py
+            ros2/cooperative_parking_robot/cooperative_parking_robot/jetson_vision_web_node.py
+            ros2/cooperative_parking_robot/cooperative_parking_robot/rigid_body_sync_node.py
+            ros2/cooperative_parking_robot/launch/cctv_server.launch.py
+            ros2/cooperative_parking_robot/launch/cctv_server_dual.launch.py
+            ros2/cooperative_parking_robot/launch/front_robot.launch.py
+            ros2/cooperative_parking_robot/launch/full_system.launch.py
+          )
+          git diff --binary \
+            d05b7af52e25efec2d8763e7109ba4eee78bb4e8 \
+            77b2469b97a070791a06f8f75ff20880e668d039 \
+            -- "${paths[@]}" > /tmp/fixed-yaw.patch
+          git apply --3way --index /tmp/fixed-yaw.patch
+
+      - name: Validate fixed-yaw port
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/bev_layout_core.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/fleet_manager_node.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/jetson_vision_web_node.py \
+            ros2/cooperative_parking_robot/cooperative_parking_robot/rigid_body_sync_node.py \
+            ros2/cooperative_parking_robot/launch/cctv_server.launch.py \
+            ros2/cooperative_parking_robot/launch/cctv_server_dual.launch.py \
+            ros2/cooperative_parking_robot/launch/front_robot.launch.py \
+            ros2/cooperative_parking_robot/launch/full_system.launch.py
+          grep -q 'translation_only_transport: true' ros2/cooperative_parking_robot/config/sync_params.yaml
+          grep -q 'align_to_slot_yaw: false' ros2/cooperative_parking_robot/config/sync_params.yaml
+          grep -q 'translation_only_transport: true' ros2/cooperative_parking_robot/config/parking_layout.yaml
+          grep -q 'use_staged_slot_entry: false' ros2/cooperative_parking_robot/config/parking_layout.yaml
+          grep -q '"translation_only_transport": True' ros2/cooperative_parking_robot/launch/front_robot.launch.py
+          grep -q '"align_to_slot_yaw": False' ros2/cooperative_parking_robot/launch/front_robot.launch.py
+          grep -q "self.declare_parameter('translation_only_transport', False)" ros2/cooperative_parking_robot/cooperative_parking_robot/rigid_body_sync_node.py
+          grep -q "self.declare_parameter('translation_only_transport', False)" ros2/cooperative_parking_robot/cooperative_parking_robot/fleet_manager_node.py
+          grep -q "rigid_body_sync_vehicle_global_node:main" ros2/cooperative_parking_robot/setup.py
+
+      - name: Commit port
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: use fixed-yaw omnidirectional final parking'
+          git push origin main
