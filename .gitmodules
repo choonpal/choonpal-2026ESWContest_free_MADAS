@@ -1,0 +1,3 @@
+[submodule "parkingbot"]
+	path = parkingbot
+	url = https://github.com/choonpal/parkingbot.git
