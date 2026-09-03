@@ -2,7 +2,7 @@
 
 **2026 임베디드 소프트웨어 경진대회 자유공모 부문 · Team MADAS**
 
-두 대의 주차 로봇이 차량의 전·후방에 접근해 협동 제어하는 ROS 2 기반 지능형 주차 시스템의 제출용 소스코드 저장소입니다. 이 저장소는 개발 저장소 `choonpal/parkingbot`의 `main`을 기준으로, 심사에 필요한 실제 프로그램 소스만 분리한 스냅샷입니다.
+두 대의 주차 로봇이 차량의 전·후방에 접근해 협동 제어하는 ROS 2 기반 지능형 주차 시스템의 제출용 소스코드 저장소입니다. 이 저장소는 개발 저장소 `choonpal/parkingbot`의 `main`을 기준으로, 심사에 필요한 실제 프로그램 소스와 실행에 필요한 주요 런타임 자산을 분리한 스냅샷입니다.
 
 ## Source snapshot
 
@@ -47,8 +47,9 @@ Raspberry Pi          Raspberry Pi
 ```text
 ros2/cooperative_parking_robot/
 ├── cooperative_parking_robot/   # 인지, 위치추정, 계획, 협동제어, UI, 통신
-├── config/                      # YAML 운용 파라미터
+├── config/                      # YAML + 카메라 calibration 자산
 ├── launch/                      # Jetson / Front / Rear 실행 구성
+├── models/                      # YOLO11-Seg 학습 weight
 ├── resource/
 ├── scripts/                     # 운용·빌드 보조 스크립트
 ├── package.xml
@@ -61,7 +62,7 @@ stm32/parking_robot/
 ├── parking_robot.ioc
 └── CMakeLists.txt
 
-dual_tile_homography_tool/       # 듀얼 CCTV Homography 보정 도구
+dual_tile_homography_tool/       # 듀얼 CCTV Homography 보정 도구 + 카메라 calibration
 tools/                           # 배포·preflight·운용 도구
 ```
 
@@ -79,16 +80,25 @@ tools/                           # 배포·preflight·운용 도구
 - STM32 모터·엔코더·초음파·그리퍼 제어
 - Jetson 기반 operator web UI
 
+## 포함한 런타임 자산
+
+`parkingbot/main` 기준으로 저장소에 추적되어 있던 실행 자산도 함께 포함했습니다.
+
+- `ros2/cooperative_parking_robot/models/parking_vehicle_yolo11n_seg.pt`
+- `ros2/cooperative_parking_robot/config/cctv0_camera_calibration.npz`
+- `ros2/cooperative_parking_robot/config/cctv2_camera_calibration.npz`
+- `ros2/cooperative_parking_robot/config/cctv_camera_calibration.npz`
+- `dual_tile_homography_tool/cctv0_camera_calibration.npz`
+- `dual_tile_homography_tool/cctv2_camera_calibration.npz`
+
+Homography 결과 `*.npy`는 기준 `parkingbot/main` snapshot에 추적된 파일이 없으므로 포함하지 않았습니다. 현장 보정 시 보정 도구를 이용해 생성합니다.
+
 ## 제출본에서 제외한 항목
 
 - 자동 회귀/단위 테스트 (`test/`)
 - 개발 과정의 ADR, change log 및 실험 문서
-- 학습된 YOLO weight (`*.pt`)
-- 현장별 생성 calibration 결과 (`*.npz`, Homography `*.npy`)
 - STM32CubeF4의 ST 제공 HAL/CMSIS vendor source
 - rosbag, 로그, 빌드 산출물 및 임시 실험 파일
-
-모델 weight와 현장 calibration 값은 실행 환경에 종속되는 결과물이며, 본 저장소에서는 이를 사용하는 프로그램 소스와 보정 도구를 공개합니다.
 
 ## Build
 
