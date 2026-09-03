@@ -494,6 +494,7 @@ def generate_launch_description():
             parameters=[LaunchConfiguration('layout_config'), {
                 'require_registered_layout': True,
                 'require_valid_vehicle_spec': True,
+                'translation_only_transport': True,
                 'require_ui_confirmation': _bool('require_ui_confirmation'),
                 'ui_request_timeout_s': _float('ui_request_timeout_s'),
                 'simultaneous_entry': _bool('simultaneous_entry'),

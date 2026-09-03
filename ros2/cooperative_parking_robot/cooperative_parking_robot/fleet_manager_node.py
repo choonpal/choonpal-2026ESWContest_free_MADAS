@@ -84,6 +84,17 @@ def normalize_planning_validation_mode(value):
     return mode
 
 
+def join_waypoint_segments(*segments):
+    """Join A* segments without duplicate hand-off waypoints."""
+    joined = []
+    for segment in segments:
+        for point in segment:
+            candidate = (float(point[0]), float(point[1]))
+            if not joined or math.dist(joined[-1], candidate) > 1e-6:
+                joined.append(candidate)
+    return joined
+
+
 class FleetManagerNode(Node):
     def __init__(self):
         super().__init__('fleet_manager_node')
@@ -126,8 +137,10 @@ class FleetManagerNode(Node):
             [1.80, 0.70, 1.80, 0.70, 1.80, 0.70, 1.80, 0.70])
         self.declare_parameter('slot_yaws_deg', [90.0, 90.0, 90.0, 90.0])
         self.declare_parameter('slot_match_tolerance_m', 0.10)
-        # 최종 주차는 슬롯 앞 정렬점까지 평행이동한 뒤 회전하고 직선 삽입한다.
+        # Legacy mode는 슬롯 밖 staging에서 회전한다. 제출 기본 모드는
+        # Lift 시점 yaw를 고정하고 메카넘 X/Y/대각선 이동만 사용한다.
         self.declare_parameter('use_staged_slot_entry', True)
+        self.declare_parameter('translation_only_transport', False)
         self.declare_parameter('parking_direction', 'forward')
         # staging 전환 오차(2cm) + 지역화/외곽 오차를 흡수할 양쪽 여유.
         self.declare_parameter('slot_fit_longitudinal_margin_m', 0.06)
@@ -213,6 +226,8 @@ class FleetManagerNode(Node):
             self.get_parameter('slot_match_tolerance_m').value)
         self.use_staged_slot_entry = bool(
             self.get_parameter('use_staged_slot_entry').value)
+        self.translation_only_transport = bool(
+            self.get_parameter('translation_only_transport').value)
         self.parking_direction = str(
             self.get_parameter('parking_direction').value).strip().lower()
         self.slot_fit_long_margin = float(
@@ -249,6 +264,10 @@ class FleetManagerNode(Node):
                 'minimum_rotation', 'forward', 'reverse'):
             raise ValueError(
                 'parking_direction must be minimum_rotation, forward, or reverse')
+        if self.translation_only_transport and self.use_staged_slot_entry:
+            raise ValueError(
+                'translation_only_transport requires '
+                'use_staged_slot_entry=false')
 
         self.require_ui_confirmation = bool(
             self.get_parameter('require_ui_confirmation').value)
@@ -1519,6 +1538,27 @@ class FleetManagerNode(Node):
         compatible.sort(key=lambda item: math.hypot(
             item[0].center_x_m - start.x_m,
             item[0].center_y_m - start.y_m))
+
+        # 고정-yaw 운반은 WAITING 영역에서 먼저 뒤로 빠진 뒤,
+        # X/Y/대각선 평행이동으로 슬롯 중심까지 이동한다.
+        departure_pose = None
+        departure_path = None
+        if self.translation_only_transport:
+            departure_pose = make_waiting_staging(
+                start,
+                self.loaded_footprint.length_m,
+                self.slot_staging_gap)
+            departure_path = self.planner.plan(
+                self.grid, self.grid_w, self.grid_h,
+                start.position, departure_pose.position)
+            if departure_path is None:
+                self.get_logger().error(
+                    '고정-yaw 대기구역 후진 경로 생성 실패')
+                return self._set_planning_blocker(
+                    'WAITING_DEPARTURE_PATH_BLOCKED')
+            departure_path = join_waypoint_segments(
+                departure_path, [departure_pose.position])
+
         selected_slot = None
         selected_fit = None
         selected_approach = None
@@ -1532,21 +1572,24 @@ class FleetManagerNode(Node):
                     self.loaded_footprint.length_m,
                     self.slot_staging_gap,
                     start.yaw_rad)
-                if self.parking_direction in ('forward', 'reverse'):
-                    approach_candidates = [
-                        candidate for candidate in approach_candidates
-                        if candidate.parking_direction == self.parking_direction]
             else:
-                # 레거시 모드도 슬롯 yaw는 보존하지만 A* 목표가 바로 중심이다.
+                # Direct mode는 슬롯 형상만 사용하고 A* 목표는 슬롯 중심이다.
                 approach_candidates = make_approach_candidates(
                     slot, self.loaded_footprint.length_m, 0.0, start.yaw_rad)
+            if self.parking_direction in ('forward', 'reverse'):
+                approach_candidates = [
+                    candidate for candidate in approach_candidates
+                    if candidate.parking_direction == self.parking_direction]
 
             for approach in approach_candidates:
                 path_goal = (approach.staging_pose.position
                              if self.use_staged_slot_entry else slot.center)
+                path_start = (departure_pose.position
+                              if self.translation_only_transport
+                              else start.position)
                 candidate_path = self.planner.plan(
                     self.grid, self.grid_w, self.grid_h,
-                    start.position, path_goal)
+                    path_start, path_goal)
                 if candidate_path is None:
                     saw_astar_failure = True
                     continue
@@ -1574,6 +1617,9 @@ class FleetManagerNode(Node):
                             candidate_path[-1][0] - path_goal[0],
                             candidate_path[-1][1] - path_goal[1]) > 1e-6:
                         candidate_path.append(path_goal)
+                elif self.translation_only_transport:
+                    candidate_path = join_waypoint_segments(
+                        departure_path, candidate_path, [slot.center])
                 selected_slot = slot
                 selected_fit = fit
                 selected_approach = approach
@@ -1628,9 +1674,12 @@ class FleetManagerNode(Node):
         sp = PoseStamped()
         sp.header.stamp = mission_stamp
         sp.header.frame_id = 'map'
-        sp.pose.position.x = selected_approach.target_pose.x_m
-        sp.pose.position.y = selected_approach.target_pose.y_m
-        slot_yaw = selected_approach.target_pose.yaw_rad
+        sp.pose.position.x = selected_slot.center_x_m
+        sp.pose.position.y = selected_slot.center_y_m
+        # 고정-yaw에서는 슬롯 장축 yaw가 아니라 Lift 시점 실제 yaw를
+        # 최종 목표 자세로 발행해 의도 회전 phase를 만들지 않는다.
+        slot_yaw = (start.yaw_rad if self.translation_only_transport else
+                    selected_approach.target_pose.yaw_rad)
         sp.pose.orientation.z = math.sin(slot_yaw / 2.0)
         sp.pose.orientation.w = math.cos(slot_yaw / 2.0)
         try:
@@ -1649,17 +1698,57 @@ class FleetManagerNode(Node):
         self.active_plan_stamp_ns = stamp_to_ns(mission_stamp)
         self.publish_state()
 
+        route_stage = (
+            f'fixed-yaw departure={departure_pose.position}'
+            if self.translation_only_transport else
+            f'stage={selected_approach.staging_pose.position}')
         self.get_logger().info(
             f'A* 경로 생성: start={start.position}, '
             f'footprint={self.loaded_footprint.length_m:.3f}x'
             f'{self.loaded_footprint.width_m:.3f}m, '
-            f'{len(waypoints)}개 waypoint → stage='
-            f'{selected_approach.staging_pose.position} → '
+            f'{len(waypoints)}개 waypoint → '
+            f'{route_stage} → '
             f'슬롯 {selected_slot.slot_id} '
             f'({selected_approach.parking_direction}, '
             f'yaw={math.degrees(slot_yaw):.1f}deg, '
             f'clearance={selected_fit.length_clearance_m:.3f}/'
             f'{selected_fit.width_clearance_m:.3f}m)')
+        return True
+
+    def _publish_retrieve_route(self, waypoints, waiting_pose):
+        path = Path()
+        mission_stamp = self.get_clock().now().to_msg()
+        path.header.stamp = mission_stamp
+        path.header.frame_id = 'map'
+        for wx, wy in waypoints:
+            ps = PoseStamped()
+            ps.header.stamp = mission_stamp
+            ps.header.frame_id = 'map'
+            ps.pose.position.x = wx
+            ps.pose.position.y = wy
+            ps.pose.orientation.w = 1.0
+            path.poses.append(ps)
+        destination = PoseStamped()
+        destination.header.stamp = mission_stamp
+        destination.header.frame_id = 'map'
+        destination.pose.position.x = waiting_pose.x_m
+        destination.pose.position.y = waiting_pose.y_m
+        destination.pose.orientation.z = math.sin(waiting_pose.yaw_rad / 2.0)
+        destination.pose.orientation.w = math.cos(waiting_pose.yaw_rad / 2.0)
+        try:
+            self.pub_slot_pose.publish(destination)
+            self.pub_waypoints.publish(path)
+        except Exception as exc:
+            self.get_logger().error(f'retrieve plan publish failed: {exc}')
+            return False
+        self.path_published = True
+        self.planning_blocker = None
+        self.active_plan_stamp_ns = stamp_to_ns(mission_stamp)
+        self.publish_state()
+        self.get_logger().info(
+            f'retrieve path: {self.active_source_slot_id} -> WAITING, '
+            f'{len(waypoints)} waypoints | '
+            f'translation_only={getattr(self, "translation_only_transport", False)}')
         return True
 
     def plan_retrieve_and_publish(self):
@@ -1681,12 +1770,6 @@ class FleetManagerNode(Node):
         self.active_vehicle_spec = dict(record.vehicle_spec)
         self._apply_active_vehicle_spec()
         final_pose = record.final_vehicle_pose
-        extraction = make_extraction_geometry(
-            source_slot, final_pose,
-            self.loaded_footprint.length_m,
-            self.slot_staging_gap,
-            self.rigid_body_lookahead,
-            self.slot_fit_long_margin)
         planning_grid = clear_source_vehicle(
             self.grid, self.grid_w, self.grid_h, self.resolution,
             final_pose,
@@ -1695,6 +1778,39 @@ class FleetManagerNode(Node):
             self.source_vehicle_fallback_mask,
             origin_x_m=getattr(self, 'grid_origin_x_m', 0.0),
             origin_y_m=getattr(self, 'grid_origin_y_m', 0.0))
+
+        path_length, path_width = footprint_extents_in_slot_axes(
+            self.loaded_footprint.length_m,
+            self.loaded_footprint.width_m,
+            final_pose.yaw_rad)
+        self.planner.set_footprint(path_length / 2.0, path_width / 2.0)
+
+        if self.translation_only_transport:
+            # 실제 주차 yaw를 유지한 채 슬롯에서 평행이동으로 빠져나온다.
+            waiting_pose = Pose2D(
+                self.wait_x, self.wait_y, final_pose.yaw_rad)
+            waiting_staging = make_waiting_staging(
+                waiting_pose,
+                self.loaded_footprint.length_m,
+                self.slot_staging_gap)
+            astar_path = self.planner.plan(
+                planning_grid, self.grid_w, self.grid_h,
+                final_pose.position, waiting_staging.position)
+            if astar_path is None:
+                self.get_logger().error(
+                    'fixed-yaw retrieve-to-waiting A* failed')
+                return self._set_planning_blocker('ASTAR_NO_PATH')
+            waypoints = join_waypoint_segments(
+                [final_pose.position], astar_path,
+                [waiting_staging.position])
+            return self._publish_retrieve_route(waypoints, waiting_pose)
+
+        extraction = make_extraction_geometry(
+            source_slot, final_pose,
+            self.loaded_footprint.length_m,
+            self.slot_staging_gap,
+            self.rigid_body_lookahead,
+            self.slot_fit_long_margin)
         extraction_clear = corridor_is_free(
                 planning_grid, self.grid_w, self.grid_h, self.resolution,
                 final_pose.position, extraction.clear_pose.position,
@@ -1747,11 +1863,6 @@ class FleetManagerNode(Node):
             return self._set_planning_blocker(
                 'WAITING_INSERTION_CORRIDOR_BLOCKED')
 
-        path_length, path_width = footprint_extents_in_slot_axes(
-            self.loaded_footprint.length_m,
-            self.loaded_footprint.width_m,
-            final_pose.yaw_rad)
-        self.planner.set_footprint(path_length / 2.0, path_width / 2.0)
         astar_path = self.planner.plan(
             planning_grid, self.grid_w, self.grid_h,
             extraction.clear_pose.position,
@@ -1773,41 +1884,7 @@ class FleetManagerNode(Node):
         if math.dist(waypoints[-1], waiting_staging.position) > 1e-6:
             waypoints.append(waiting_staging.position)
 
-        path = Path()
-        mission_stamp = self.get_clock().now().to_msg()
-        path.header.stamp = mission_stamp
-        path.header.frame_id = 'map'
-        for wx, wy in waypoints:
-            ps = PoseStamped()
-            ps.header.stamp = mission_stamp
-            ps.header.frame_id = 'map'
-            ps.pose.position.x = wx
-            ps.pose.position.y = wy
-            ps.pose.orientation.w = 1.0
-            path.poses.append(ps)
-        destination = PoseStamped()
-        destination.header.stamp = mission_stamp
-        destination.header.frame_id = 'map'
-        destination.pose.position.x = waiting_pose.x_m
-        destination.pose.position.y = waiting_pose.y_m
-        destination.pose.orientation.z = math.sin(waiting_pose.yaw_rad / 2.0)
-        destination.pose.orientation.w = math.cos(waiting_pose.yaw_rad / 2.0)
-        try:
-            # slot을 먼저 보내도 RigidBodySync가 stamp별 pending으로 보관한다.
-            # path가 실패하면 운반 명령은 시작되지 않아 같은 mission이 재시도 가능하다.
-            self.pub_slot_pose.publish(destination)
-            self.pub_waypoints.publish(path)
-        except Exception as exc:
-            self.get_logger().error(f'retrieve plan publish failed: {exc}')
-            return False
-        self.path_published = True
-        self.planning_blocker = None
-        self.active_plan_stamp_ns = stamp_to_ns(mission_stamp)
-        self.publish_state()
-        self.get_logger().info(
-            f'retrieve path: {self.active_source_slot_id} -> WAITING, '
-            f'{len(waypoints)} waypoints')
-        return True
+        return self._publish_retrieve_route(waypoints, waiting_pose)
 
     def publish_state(self):
         self.status_sequence += 1
@@ -1835,6 +1912,8 @@ class FleetManagerNode(Node):
             'plan_stamp_ns': self.active_plan_stamp_ns,
             'request_status': self.request_status,
             'planning_validation_mode': self.planning_validation_mode,
+            'translation_only_transport': bool(getattr(
+                self, 'translation_only_transport', False)),
             'validation_warnings': list(self.validation_warnings),
             'planning_blocker': self.planning_blocker,
             'sync_fault': self.sync_fault,

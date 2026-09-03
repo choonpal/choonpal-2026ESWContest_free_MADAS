@@ -101,6 +101,7 @@ class RigidBodySyncNode(Node):
         self.declare_parameter('final_lateral_tol', 0.01)
         self.declare_parameter('final_speed_ratio', 0.30)
         self.declare_parameter('align_to_slot_yaw', True)
+        self.declare_parameter('translation_only_transport', False)
 
         gp = self.get_parameter
         self.wheelbase = float(gp('wheelbase').value)
@@ -150,6 +151,8 @@ class RigidBodySyncNode(Node):
             gp('initial_target_offset_gate_m').value)
         self.final_speed_ratio = float(gp('final_speed_ratio').value)
         self.align_to_slot_yaw = bool(gp('align_to_slot_yaw').value)
+        self.translation_only_transport = bool(
+            gp('translation_only_transport').value)
         self.final_approach_dist = float(gp('final_approach_dist').value)
         self.final_pos_tol = float(gp('final_pos_tol').value)
         self.final_yaw_tol = float(gp('final_yaw_tol').value)
@@ -291,6 +294,7 @@ class RigidBodySyncNode(Node):
             'rigid_body_sync 시작 | '
             f'wheelbase={self.wheelbase:.3f}m | '
             f'yaw_hold={self.hold_initial_yaw} | '
+            f'translation_only={self.translation_only_transport} | '
             f'aruco_offset={self.aruco_distance_offset:+.3f}m | '
             f'aruco_dist={self.use_aruco_distance}')
         if not self.use_aruco_distance:
@@ -337,6 +341,11 @@ class RigidBodySyncNode(Node):
             raise ValueError('path/target/slot timeouts must be positive')
         if self.future_tolerance < 0.0:
             raise ValueError('future_tolerance_s must be non-negative')
+        if self.translation_only_transport and (
+                not self.hold_initial_yaw or self.align_to_slot_yaw):
+            raise ValueError(
+                'translation_only_transport requires hold_initial_yaw=true '
+                'and align_to_slot_yaw=false')
 
     def _accept_stamped(self, stream, msg):
         accepted, reason = self.stamp_gates[stream].accept(
@@ -793,7 +802,12 @@ class RigidBodySyncNode(Node):
             })
 
     def compute_final_command(self, cx, cy, ct):
-        """staging에서 슬롯 Yaw 정렬 후 슬롯 중심으로 저속 직선 삽입한다."""
+        """Finish at the destination with optional slot-yaw alignment.
+
+        Translation-only production mode keeps the Lift-time yaw reference;
+        only small yaw-hold corrections are allowed while X/Y motion closes
+        the remaining position error.
+        """
         sx, sy, slot_yaw = self.slot_pose
         ex, ey = sx - cx, sy - cy
         pos_err = math.hypot(ex, ey)

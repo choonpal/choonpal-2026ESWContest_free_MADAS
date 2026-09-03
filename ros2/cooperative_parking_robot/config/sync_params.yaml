@@ -7,9 +7,11 @@ rigid_body_sync_node:
     lookahead: 0.15
     path_goal_tolerance: 0.01
 
-    # 메카넘 평행이동: 목표 방향을 보려고 돌지 않고 인양 직후 yaw 유지
+    # 메카넘 평행이동: 목표 방향을 보려고 돌지 않고 인양 직후 yaw 유지.
+    # 의도 회전은 금지하되 작은 yaw-hold 보정은 계속 허용한다.
     hold_initial_yaw: true
     yaw_hold_kp: 1.0
+    translation_only_transport: true
 
     # 상대 x/yaw 기준. production entry point에서는 limit부터 feed-forward를
     # 완만하게 낮추되 PID correction과 path를 유지한다. stop/timeout 값은
@@ -140,12 +142,12 @@ rigid_body_sync_node:
     # 차량 yaw는 mask 장축이 아니라 Front/Rear odom heading의 circular mean을
     # 사용한다. YOLO는 현재 x/y global correction에만 권위를 갖는다.
 
-    # 기존 main 동작 유지: A* 마지막 staging에 도착한 뒤 슬롯 yaw로 회전하고,
-    # 회전 완료 후 슬롯 중심선 정렬 및 저속 직선 삽입을 수행한다.
+    # 차량 yaw를 Lift 시점 기준으로 유지한 채 X/Y/대각선 평행이동으로
+    # 슬롯 중심까지 진입한다. 슬롯 yaw로의 의도 회전 단계는 사용하지 않는다.
     final_approach_dist: 0.02
     final_pos_tol: 0.02
     final_yaw_tol: 0.052
     final_lateral_tol: 0.01
     final_speed_ratio: 0.30
-    align_to_slot_yaw: true
+    align_to_slot_yaw: false
     slot_pose_wait_timeout_s: 1.0

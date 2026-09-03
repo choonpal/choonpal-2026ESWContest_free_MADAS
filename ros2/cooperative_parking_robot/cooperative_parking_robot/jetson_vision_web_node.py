@@ -100,7 +100,7 @@ main{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
 h1{font-size:17px}.legend{width:100%;margin:0;font-size:11px;gap:9px}}
 </style></head><body><header><h1>Parkingbot 실시간 BEV / Occupancy Map</h1>
 <span id="state">맵 대기 중</span><div class="legend">
-<span class="key waiting">WAITING</span><span class="key slot">P1–P4</span>
+<span class="key waiting">WAITING</span><span class="key slot">P1–P3</span>
 <span class="key start">ROBOT START</span><span class="key occupied">OCCUPIED</span>
 </div></header><main><img src="/map_feed" alt="실시간 주차장 맵"></main>
 <script>

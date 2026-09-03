@@ -293,6 +293,7 @@ def generate_launch_description():
             parameters=[layout_config, {
                 'require_registered_layout': True,
                 'require_valid_vehicle_spec': True,
+                'translation_only_transport': True,
                 'simultaneous_entry': _bool('simultaneous_entry'),
                 'planning_validation_mode': LaunchConfiguration(
                     'planning_validation_mode'),
@@ -359,8 +360,9 @@ def generate_launch_description():
                 'use_vehicle_spec_wheelbase': True,
                 'max_speed': 0.08,
                 'hold_initial_yaw': True,
-                # 경로 중에는 yaw를 고정하고 슬롯 밖 staging에서만 회전한다.
-                'align_to_slot_yaw': True,
+                # 인양 직후 yaw를 유지하고 X/Y/대각선으로만 운반한다.
+                'translation_only_transport': True,
+                'align_to_slot_yaw': False,
                 'final_approach_dist': 0.02,
                 'use_aruco_distance': True,
                 'cctv_marker_timeout_s': _float(

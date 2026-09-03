@@ -218,8 +218,9 @@ def generate_launch_description():
                 "max_omega": 0.30,
                 "lookahead": 0.15,
                 "hold_initial_yaw": True,
-                # 일반 A* 구간은 yaw 유지, 슬롯 밖 staging에서만 슬롯 yaw 정렬.
-                "align_to_slot_yaw": True,
+                # 인양 직후 yaw를 유지하고 X/Y/대각선으로만 운반한다.
+                "translation_only_transport": True,
+                "align_to_slot_yaw": False,
                 "final_approach_dist": 0.02,
                 "use_vehicle_spec_wheelbase": True,
                 "yaw_hold_kp": 1.0,

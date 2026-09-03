@@ -276,11 +276,12 @@ fleet_manager_node:
     # 최종 차량만이 아니라 Front+차량+Rear 결합 footprint가 들어가는지 검사한다.
     slot_fit_longitudinal_margin_m: {long_margin:.6f}
     slot_fit_lateral_margin_m: {lat_margin:.6f}
-    # 슬롯 입구 밖 정렬점에서 추가로 띄울 거리.
+    # 대기구역에서 먼저 뒤로 빠질 때 확보할 추가 간격.
     slot_staging_gap_m: {staging_gap:.6f}
     # CCTV 차량 중심과 Front/Rear odom 중점 차이가 이 범위 안일 때 A* 시작점에 반영.
     initial_target_offset_gate_m: 0.500000
-    use_staged_slot_entry: true
+    translation_only_transport: true
+    use_staged_slot_entry: false
     parking_direction: "forward"
     # 현 실증 배치의 기본 운용은 기존 sequential Front-first 접근이다.
     simultaneous_entry: false
