@@ -1,0 +1,151 @@
+rigid_body_sync_node:
+  ros__parameters:
+    # 실측 차량: wheelbase 0.785m, 로봇 길이 0.565m, 차체 사이 간격 0.220m
+    wheelbase: 0.785
+    max_speed: 0.08
+    max_omega: 0.30
+    lookahead: 0.15
+    path_goal_tolerance: 0.01
+
+    # 메카넘 평행이동: 목표 방향을 보려고 돌지 않고 인양 직후 yaw 유지
+    hold_initial_yaw: true
+    yaw_hold_kp: 1.0
+
+    # 상대 x/yaw 기준. production entry point에서는 limit부터 feed-forward를
+    # 완만하게 낮추되 PID correction과 path를 유지한다. stop/timeout 값은
+    # legacy/baseline 호환 및 진단용이며 자동 E-stop 기준으로 사용하지 않는다.
+    dist_error_limit: 0.03
+    dist_stop_limit: 0.08
+    dist_error_timeout_s: 2.0
+    yaw_error_limit: 0.15
+    odom_timeout_s: 0.50
+    marker_slowdown_s: 1.0
+    marker_stop_s: 2.0
+    continuous_drive_min_speed_scale: 0.20
+    continuous_drive_visual_full_degrade_s: 10.0
+
+    # 상대 lateral은 인양 기구의 실제 횡하중과 직결되므로 x/yaw와 다르게
+    # 기존 물리 한계를 유지한다. 판정값은 innovation gate를 통과한 ID0 기반
+    # fused lateral만 사용하며 raw wheel lateral은 직접 stop 근거가 아니다.
+    sync_lateral_error_limit_m: 0.020
+    sync_lateral_stop_limit_m: 0.040
+    sync_lateral_error_timeout_s: 1.0
+
+    # 거리 offset 값은 config/id0_calibration.yaml 한 곳에서 관리한다.
+    use_aruco_distance: true
+    aruco_min_distance_m: 0.05
+    aruco_max_distance_m: 1.50
+    aruco_timeout_s: 0.30
+    cctv_marker_timeout_s: 0.50
+    robot_length_m: 0.565
+    minimum_inter_robot_gap_m: 0.22
+
+    # /wheel_odom 누적 dead-reckoning을 현재 map pose에 anchor해 predict한다.
+    # 두 장비의 최신값을 무조건 섞지 않고 source timestamp가 50ms 안인 pair만
+    # 새 relative sample로 사용한다. 어긋난 동안은 마지막 동기 sample을 hold한다.
+    use_raw_wheel_relative_predictor: true
+    wheel_relative_timeout_s: 0.50
+    wheel_pair_sync_slop_s: 0.05
+    # 실측 메카넘 횡오차가 실제 formation lateral보다 크게 누적됐으므로
+    # wheel은 상대 x/yaw prediction에만 쓰고 relative-y delta는 고정한다.
+    # ID0가 보일 때만 lateral measurement를 갱신한다.
+    sync_use_wheel_lateral_predictor: false
+
+    # 아래 CCTV pair 설정은 baseline 클래스 호환을 위해 남겨 두지만 production
+    # rigid_body_sync는 해당 topic을 구독하지 않고 relative fusion에 사용하지 않는다.
+    cctv_pair_timeout_s: 0.50
+    cctv_pair_sync_slop_s: 0.12
+
+    # Lift 직후 calibration 적용된 ID0 x/y/yaw를 여러 frame 수집해 mission
+    # reference를 한 번 lock한다. nominal geometry는 sanity check에만 쓰고,
+    # DRIVE PID target은 lock된 reference를 Lift 해제까지 유지한다.
+    sync_reference_capture_samples: 20
+    sync_reference_capture_timeout_s: 5.0
+    sync_reference_settle_time_s: 0.5
+    # Must not be tighter than the pre-lift alignment contract
+    # (0.06 m / 0.03 m / 4 deg) for the same relative pose.
+    sync_reference_max_x_error_m: 0.060
+    sync_reference_max_lateral_error_m: 0.030
+    sync_reference_max_yaw_error_deg: 4.0
+    sync_reference_max_sample_std_x_m: 0.01
+    sync_reference_max_sample_std_y_m: 0.01
+    sync_reference_max_sample_std_yaw_deg: 2.0
+    sync_reference_max_retries: 2
+    sync_reference_retry_delay_s: 0.3
+
+    # Q/R은 제어주기 횟수가 아니라 실제 새 odom의 시간·변화량으로 누적된다.
+    # 아래 값은 보수적 초기값이며 정지 ArUco 로그와 wheel-slip 실측으로 확정한다.
+    sync_dist_process_sigma_m_sqrt_s: 0.003
+    sync_yaw_process_sigma_deg_sqrt_s: 0.50
+    sync_lateral_process_sigma_m_sqrt_s: 0.003
+    sync_dist_process_gain: 0.03
+    sync_yaw_process_gain: 0.03
+    sync_lateral_process_gain: 0.03
+    sync_dist_measurement_sigma_m: 0.015
+    sync_yaw_measurement_sigma_deg: 3.0
+    sync_lateral_measurement_sigma_m: 0.015
+    sync_initial_covariance_scale: 4.0
+
+    # Rear ID0 innovation/outlier gate. 단발 오측정은 해당 measurement만
+    # 폐기하고 wheel odom prediction과 주행은 계속한다. 서로 일관된 관측 4개가
+    # 연속되면 필터 drift로 판단해 명시적으로 재획득한다.
+    aruco_distance_innovation_gate_m: 0.04
+    aruco_yaw_innovation_gate_deg: 5.0
+    aruco_innovation_sigma_gate: 4.0
+    aruco_reacquire_count: 4
+    aruco_reacquire_distance_m: 0.12
+    aruco_reacquire_yaw_deg: 15.0
+    aruco_consistency_distance_m: 0.015
+    aruco_consistency_yaw_deg: 2.0
+    aruco_lateral_envelope_m: 0.10
+    aruco_lateral_innovation_gate_m: 0.04
+    aruco_reacquire_lateral_m: 0.10
+    aruco_consistency_lateral_m: 0.015
+
+    # 센서 잡음에 의한 모터 hunting 방지용 작은 제어 deadband.
+    # 실차 첫 단계는 저속 P-only로 시작하고, D/I는 로그 근거가 생긴 뒤 추가한다.
+    sync_dist_deadband_m: 0.003
+    sync_yaw_deadband_deg: 0.50
+    sync_lateral_deadband_m: 0.003
+    sync_target_lateral_m: 0.0
+    sync_target_yaw_deg: 0.0
+    sync_lateral_kp: 0.4
+    sync_lateral_ki: 0.0
+    sync_lateral_kd: 0.0
+    sync_lateral_max_correction_mps: 0.015
+
+    # 슬롯 앞 제자리 회전은 키보드 Q/E와 같은 동기 원리를 사용한다.
+    # 회전 중 lateral PID가 +/-omega*L/2 궤도와 싸우지 않게 억제하고,
+    # innovation gate를 통과한 ID0 lateral을 common-yaw 위상 보정에 사용한다.
+    rotation_phase_kp: 1.8
+    rotation_phase_deadband_deg: 0.5
+    rotation_phase_correction_limit_rps: 0.06
+    rotation_phase_correction_rate_limit_rps2: 0.30
+    rotation_phase_lateral_lpf_alpha: 0.65
+
+    # 차량 중심과 로봇 두 대 중점의 물리 장착 오프셋은 Lift 세션 동안 고정한다.
+    # YOLO vehicle_pose_feedback은 이 값을 바꾸지 않고 global map x/y bias를
+    # 보정한다. transport yaw는 Front/Rear odom heading의 circular mean이다.
+    initialize_offset_from_target_pose: true
+    initial_target_offset_gate_m: 0.50
+    cctv_feedback_gate_m: 0.25
+    cctv_offset_alpha: 0.30
+    cctv_feedback_timeout_s: 0.50
+    vehicle_global_pose_enabled: true
+    vehicle_global_pose_timeout_s: 0.75
+    # ID0가 차량에 가려져도 fresh YOLO global pose가 있으면 저속으로 계속한다.
+    # 두 visual source가 모두 사라진 상태만 2초 뒤 recoverable HOLD한다.
+    vehicle_global_blind_hold_s: 2.0
+    vehicle_global_fallback_speed_scale: 0.35
+    # 차량 yaw는 mask 장축이 아니라 Front/Rear odom heading의 circular mean을
+    # 사용한다. YOLO는 현재 x/y global correction에만 권위를 갖는다.
+
+    # 기존 main 동작 유지: A* 마지막 staging에 도착한 뒤 슬롯 yaw로 회전하고,
+    # 회전 완료 후 슬롯 중심선 정렬 및 저속 직선 삽입을 수행한다.
+    final_approach_dist: 0.02
+    final_pos_tol: 0.02
+    final_yaw_tol: 0.052
+    final_lateral_tol: 0.01
+    final_speed_ratio: 0.30
+    align_to_slot_yaw: true
+    slot_pose_wait_timeout_s: 1.0

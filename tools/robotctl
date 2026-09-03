@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Fail-closed launcher in front of the existing ParkingBot robotctl core."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import runpy
+import subprocess
+import sys
+
+from parkingbot_ops import (
+    conditional_config_errors, invalid_paths, load_env, missing_config, run_root,
+)
+from production_preflight import revision_status, run_id0_yaw_preflight
+
+HERE = Path(__file__).resolve().parent
+CORE = HERE / "robotctl_core"
+
+# Preserve the existing module-level helper API for the repository's robotctl
+# regression tests and operational scripts. The core is evaluated without
+# running its CLI main, then this guard overrides only command dispatch.
+_CORE_NAMESPACE = runpy.run_path(str(CORE))
+for _name, _value in _CORE_NAMESPACE.items():
+    if not _name.startswith("__") and _name not in globals():
+        globals()[_name] = _value
+
+DEFAULT_CONFIG = Path("~/.config/parkingbot/production_hosts.env").expanduser()
+GUARDED_COMMANDS = {"start", "restart"}
+ID0_COMMANDS = {"id0-check", "id0_check"}
+
+
+def normalized_argv() -> list[str]:
+    argv = sys.argv[1:]
+    invoked = Path(sys.argv[0]).name
+    if invoked.startswith("robot_") and invoked != "robotctl":
+        argv.insert(0, invoked.removeprefix("robot_"))
+    return argv
+
+
+def selected_command(argv: list[str]) -> str | None:
+    skip_next = False
+    for token in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if token == "--config":
+            skip_next = True
+            continue
+        if token.startswith("--config="):
+            continue
+        if not token.startswith("-"):
+            return token
+    return None
+
+
+def selected_config_path(argv: list[str]) -> Path:
+    for index, token in enumerate(argv):
+        if token == "--config" and index + 1 < len(argv):
+            return Path(argv[index + 1]).expanduser()
+        if token.startswith("--config="):
+            return Path(token.split("=", 1)[1]).expanduser()
+    return Path(os.environ.get("PARKINGBOT_CONFIG", DEFAULT_CONFIG)).expanduser()
+
+
+def checked_config(path: Path) -> dict[str, str]:
+    config = load_env(path)
+    errors = []
+    errors.extend(f"{key} is not configured" for key in missing_config(config))
+    errors.extend(
+        f"{key} must be an absolute path" for key in invalid_paths(config))
+    errors.extend(conditional_config_errors(config))
+    if errors:
+        raise ValueError("\n".join(errors))
+    return config
+
+
+def core_argv(argv: list[str]) -> list[str]:
+    return [str(CORE), *argv]
+
+
+def run_core(
+        argv: list[str], config: dict[str, str], *,
+        repository_cwd: bool = False) -> int:
+    cwd = None
+    if repository_cwd:
+        cwd = Path(config["CONTROL_WORKSPACE"]) / "src/cooperative_parking_robot"
+    return subprocess.run(core_argv(argv), cwd=cwd).returncode
+
+
+def write_yaw_result(payload: dict) -> None:
+    latest = run_root() / "latest"
+    if not latest.exists():
+        return
+    target = latest.resolve() / "state/id0_yaw_preflight.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def print_revision_failure(status: dict) -> None:
+    print("[BLOCKED] production code revision preflight failed", file=sys.stderr)
+    for error in status["errors"]:
+        print(f"- {error}", file=sys.stderr)
+
+
+def check_revisions(config: dict[str, str]) -> bool:
+    status = revision_status(config, runner=_RunnerAdapter())
+    if status["ok"]:
+        print(f"[OK] all deployment revisions match {status['controller_head']}")
+        return True
+    print_revision_failure(status)
+    return False
+
+
+def run_id0_check(config: dict[str, str]) -> int:
+    print(
+        "[CHECK] Keep both robots stationary and position them so the Rear "
+        "camera continuously sees Front marker ID0.")
+    result = run_id0_yaw_preflight(config, runner=_RunnerAdapter())
+    write_yaw_result(result)
+    if result.get("passed"):
+        print(
+            "[OK] ID0 yaw stable | "
+            f"samples={result.get('sample_count')} "
+            f"visible={result.get('visible_ratio'):.2f} "
+            f"std={result.get('std_deg'):.2f}deg "
+            f"peak={result.get('max_deviation_deg'):.2f}deg "
+            f"step={result.get('max_step_deg'):.2f}deg")
+        return 0
+    print(
+        "[BLOCKED] ID0 yaw check failed: "
+        f"{result.get('reason', 'UNKNOWN')}", file=sys.stderr)
+    print(json.dumps(result, ensure_ascii=False), file=sys.stderr)
+    return 1
+
+
+def main() -> int:
+    argv = normalized_argv()
+    command = selected_command(argv)
+    if command is None:
+        return subprocess.run(core_argv(argv)).returncode
+
+    config_path = selected_config_path(argv)
+    try:
+        config = checked_config(config_path)
+    except ValueError as exc:
+        print(f"[BLOCKED] {exc}", file=sys.stderr)
+        return 2
+
+    if command == "doctor":
+        core_result = run_core(argv, config, repository_cwd=True)
+        return core_result if check_revisions(config) else 1
+
+    if command in ID0_COMMANDS:
+        if not check_revisions(config):
+            return 1
+        return run_id0_check(config)
+
+    if command not in GUARDED_COMMANDS:
+        return run_core(argv, config)
+
+    if not check_revisions(config):
+        return 1
+    result = run_core(argv, config, repository_cwd=True)
+    if result == 0:
+        print(
+            "[NEXT] HOME 배치에서는 ID0가 보이지 않을 수 있습니다. "
+            "협동 시험 전 두 로봇을 정렬한 뒤 robot_id0_check를 실행하세요.")
+    return result
+
+
+class _RunnerAdapter:
+    """Use subprocess with the same bounded result contract as parkingbot_ops."""
+
+    def run(self, argv, *, timeout=10, check=False):
+        try:
+            return subprocess.run(
+                argv, text=True, capture_output=True,
+                timeout=timeout, check=check)
+        except subprocess.TimeoutExpired as exc:
+            return subprocess.CompletedProcess(
+                argv, returncode=124,
+                stdout=(exc.stdout or "") if isinstance(exc.stdout, str) else "",
+                stderr=f"timeout after {timeout}s")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
