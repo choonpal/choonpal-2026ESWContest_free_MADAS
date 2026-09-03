@@ -2,13 +2,14 @@
 
 **2026 임베디드 소프트웨어 경진대회 자유공모 부문 · Team MADAS**
 
-두 대의 주차 로봇이 차량의 전·후방에 접근해 협동 제어하는 ROS 2 기반 지능형 주차 시스템의 제출용 소스코드 저장소입니다. 이 저장소는 개발 저장소 `choonpal/parkingbot`의 `main`을 기준으로, 심사에 필요한 실제 프로그램 소스와 실행에 필요한 주요 런타임 자산을 분리한 스냅샷입니다.
+두 대의 주차 로봇이 차량의 전·후방에 접근해 협동 제어하는 ROS 2 기반 지능형 주차 시스템의 제출용 소스코드 저장소입니다. 기본 소스는 개발 저장소 `choonpal/parkingbot`의 `main` 스냅샷을 사용하며, 최종 주차 방식은 해당 저장소에서 구현·검증했던 fixed-yaw omnidirectional parking 기능을 현재 production 스택에 이식했습니다.
 
 ## Source snapshot
 
 - Upstream: `choonpal/parkingbot`
-- Branch 기준: `main`
-- Snapshot commit: `6327c92e95fb3c960e42b05d44ea27e01d523077`
+- Base branch: `main`
+- Base snapshot commit: `6327c92e95fb3c960e42b05d44ea27e01d523077`
+- Fixed-yaw parking source commit: `77b2469b97a070791a06f8f75ff20880e668d039`
 - ROS 2: Humble
 - MCU: STM32F401RE
 
@@ -42,6 +43,8 @@ Raspberry Pi          Raspberry Pi
 
 강체 협동주행 단계에서는 차량에 부착된 마커가 아니라, 천장 카메라의 YOLO11-Seg 차량 검출 결과에서 얻은 차량 중심을 Homography로 `map` 좌표계에 투영해 global 위치 피드백으로 사용합니다. 로봇 간 상대 정렬은 Rear ID0 ArUco 및 로봇 상태 추정을 별도의 상대 제어 정보로 사용하도록 분리되어 있습니다.
 
+운반 및 최종 주차는 **fixed-yaw translation-only** 방식입니다. 차량을 들어 올린 시점의 yaw를 기준으로 유지하면서 메카넘휠의 X/Y/대각선 평행이동으로 주차 슬롯 중심까지 이동하며, 슬롯 방향으로 맞추기 위한 의도적인 최종 제자리 회전은 수행하지 않습니다. 다만 실제 주행 중 yaw가 미세하게 틀어질 경우 기준 yaw를 유지하기 위한 작은 각속도 보정은 허용합니다.
+
 ## 제출 소스 구조
 
 ```text
@@ -73,6 +76,7 @@ tools/                           # 배포·preflight·운용 도구
 - 듀얼 CCTV 관측 병합과 차량 global pose feedback
 - ArUco 기반 Front/Rear 상대 자세 관측
 - A* 기반 주차/출차 경로 생성 및 Fleet mission 관리
+- Lift 시점 yaw를 유지하는 X/Y/대각선 메카넘 협동 운반 및 무회전 최종주차
 - Front/Rear 강체 기구학 및 relative synchronization
 - PID/Kalman 기반 상대 오차 보정
 - 차량 global 위치와 로봇 상대 위치를 분리한 협동주행 제어
